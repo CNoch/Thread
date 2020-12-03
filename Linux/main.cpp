@@ -163,8 +163,7 @@ int main()
 //减少一次，当锁引用计数值为 0 时允许其他线程获得该锁，否则其他线
 //程调用 pthread_mutex_lock 时尝试获取锁时，会阻塞在那里
 
-/*
- * Semaphore(信号量)
+/* Semaphore(信号量)
  * API:#include <semaphore.h>
  *      1.init semaphore(信号量对象,信号量是否可以被初始化该信号量的进程 fork 出来的子进程共享，取值为0(不可以共享);1(可以共享),初始状态下资源的数量)
  *      int sem_init(sem_t *sem, int pshared, unsigned int value);
@@ -193,6 +192,7 @@ int main()
         sem_wait、sem_trywait、sem_timedwait 可以被 Linux 信号中断，被信号中断后，函数立即返回，返回值是 ﹣1，错误码 errno 为 EINTR。
         虽然上述函数没有以 pthread_ 作为前缀，实际使用这个系列的函数时需要链接 pthread 库
 */
+/*
 #include <semaphore.h>
 #include <list>
 
@@ -265,12 +265,230 @@ int main()
     }
 
     pthread_create(&producerthread,NULL,producer_thread,NULL);
-    pthread_join(producerthread,NULL);
+
     for (int i = 0; i < 5; i++)
     {
         pthread_join(consumerthread[i],NULL);
     }
+    pthread_join(producerthread,NULL);
+
     pthread_mutex_destroy(&g_mutex);
     sem_destroy(&g_sem);
+    return 0;
+}
+*/
+
+/* cond(条件变量)
+ * API:#include <semaphore.h>
+ *      1.初始化条件变量
+ *      @ pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+ *      @ int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr);
+ *      2.销毁条件变量
+ *      int pthread_cond_destroy(pthread_cond_t * cond);
+ *      3.等待条件变量的满足,如果条件变量代表的条件不满足,调用 pthread_cond_wait 的线程会一直等待下去
+ *      int pthread_cond_wait(pthread_cond_t *restrict cond, pthread_mutex_t * restrict mutex);
+ *      4.pthread_cond_wait 非阻塞版本,它会在指定时间内等待条件满足,超过参数 abstime 设置的时候后 pthread_cond_timedwait 函数会立即返回
+ *      int pthread_cond_timedwait(pthread_cond_t* restrict cond,pthread_mutex_t * restrict mutex, const struct timespec* restrict abstime);
+ *      5.唤醒因调用 pthread_cond_wait 等待的线程,一次随机唤醒一个线程
+ *      int pthread_cond_signal(pthread_cond_t * cond);
+ *      6.唤醒因调用 pthread_cond_wait 等待的线程,可以同时唤醒多个线程
+*/
+/*
+#include <list>
+#include <semaphore.h>
+class Task
+{
+public:
+    Task(int taskId)
+    {
+        m_taskId = taskId;
+    }
+    void doTaks()
+    {
+        printf("handle , taskId:%d,threadId:%d\n",m_taskId,pthread_self());
+    }
+private:
+    int m_taskId;
+};
+pthread_mutex_t g_mutex;
+std::list<Task*> g_tasklist;
+pthread_cond_t g_cond;
+
+void * consumer_thread(void *param)
+{
+    Task * pTask = NULL;
+    while (1)
+    {
+        pthread_mutex_lock(&g_mutex);
+        while (g_tasklist.empty())
+        {
+            //如果获得了互斥锁,但是条件不合适的话,pthread_cond_wait 会释放锁,不往下执行
+            //当发生变化后,条件合适, pthread_cond_wait 将直接获得锁
+            //当 pthread_cond_wait 函数阻塞时，它会释放其绑定的互斥体，并阻塞线程，因此在调用该函数前应该对互斥体有个加锁操作
+            pthread_cond_wait(&g_cond,&g_mutex);
+            //当收到条件信号时， pthread_cond_wait 会返回并对其绑定的互斥体进行加锁，因此在其下面一定有个对互斥体进行解锁的操作
+        }
+        pTask = g_tasklist.front();
+        g_tasklist.pop_front();
+        pthread_mutex_unlock(&g_mutex);
+        if (pTask == NULL)
+            continue;
+        pTask->doTaks();;
+        delete pTask;
+        pTask = NULL;
+    }
+}
+
+void *producer_thread(void* param)
+{
+    int taskID = 0;
+    Task * pTask = NULL;
+    while (1)
+    {
+        pTask = new Task(taskID);
+        pthread_mutex_lock(&g_mutex);
+        g_tasklist.emplace_back(pTask);
+        printf("producer,taskID:%d,threadID:%d\n",taskID,pthread_self());
+        pthread_mutex_unlock(&g_mutex);
+        //释放信号量，通知消费者线程
+        pthread_cond_signal(&g_cond);
+        taskID++;
+        sleep(1);
+    }
+}
+
+int main()
+{
+    pthread_mutex_init(&g_mutex,NULL);
+    pthread_cond_init(&g_cond,NULL);
+    pthread_t consumerthread[5];
+    for (int i = 0;i < 5;i++)
+    {
+        pthread_create(&consumerthread[i],NULL,consumer_thread,NULL);
+    }
+    pthread_t producerthread;
+    sleep(1);
+    pthread_create(&producerthread,NULL,producer_thread,NULL);
+    pthread_join(producerthread,NULL);
+    for (int i = 0;i < 5; i++)
+    {
+        pthread_join(consumerthread[i],NULL);
+    }
+
+    pthread_mutex_destroy(&g_mutex);
+    pthread_cond_destroy(&g_cond);
+    return 0;
+}
+*/
+
+/* rwlock(读写锁)
+ * API: #include <pthread.h>
+ *      1.初始化读写锁
+ *      @ pthread_rwlock_t myrwlock = PTHREAD_RWLOCK_INITIALIZER;
+ *      @ int pthread_rwlock_init(pthread_rwlock_t *rwlock, const pthread_rwlockattr_t *attr);
+ *      2.销毁读写锁
+ *      int pthread_rwlock_destroy(pthread_rwlock_t *rwlock);
+ *      3.请求读锁的系统 API 接口
+ *      @ int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock);
+ *      @ int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock);
+ *      @ int pthread_rwlock_timedrdlock(pthread_rwlock_t *rwlock, const struct timespec *abstime);
+ *      4.请求写锁的系统 API 接口
+ *      @ int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock);
+ *      @ int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock);
+ *      @ int pthread_rwlock_timedwrlock(pthread_rwlock_t * abstime);
+ *      5.锁的释放
+ *      int pthread_rwlock_unlock(pthread_rwlock_t *rwlock);
+ *      6.初始化读写锁的属性
+ *      int pthread_rwlockattr_init(pthread_rwlockattr_t * attr);
+ *      7.销毁读写锁的属性
+ *      int pthread_rwlockattr_destroy(pthread_rwlockattr_t *attr);
+ *      7.设置读写锁的属性
+ *      int pthread_rwlockattr_setkid_np(pthread_rwlockattr_t * attr, int pref);
+ *      8.查询读写锁的属性
+ *      int pthread_rwlockattr_getkind_np(const pthread_rwlockattr_t *attr, int *pref);
+ *      pref 即设置读写锁的类型: enum
+ *                            {
+ *                               //读者优先（即同时请求读锁和写锁时，请求读锁的线程优先获得锁）
+                                 PTHREAD_RWLOCK_PREFER_READER_NP,
+                                 //不要被名字所迷惑，也是读者优先
+                                 PTHREAD_RWLOCK_PREFER_WRITER_NP,
+                                 //写者优先（即同时请求读锁和写锁时，请求写锁的线程优先获得锁）
+                                 PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP,
+                                 PTHREAD_RWLOCK_DEFAULT_NP = PTHREAD_RWLOCK_PREFER_READER_NP
+ *                            }
+ *NOTE:
+ *      1.读锁用于共享模式
+ *      @ 如果当前读写锁已经被某线程以读模式占有了，其他线程调用 pthread_rwlock_rdlock （请求读锁）会立刻获得读锁；
+ *      @ 如果当前读写锁已经被某线程以读模式占有了，其他线程调用 pthread_rwlock_wrlock （请求写锁）会陷入阻
+ *      2.写锁用的是独占模
+ *      @ 如果当前读写锁被某线程以写模式占有，无论调用 pthread_rwlock_rdlock 还是 pthread_rwlock_wrlock 都会陷入阻塞，
+ *        即写模式下不允许任何读锁请求通过，也不允许任何写锁请求通过，读锁请求和写锁请求都要陷入阻塞，直到线程释放写
+ *
+ *              *****************************************************************
+ *              * 锁当前状态/其他线程请求锁类型          请求读锁           请求写锁    *
+ *              *****************************************************************
+ *              *         无锁                        通过               通过      *
+ *              *****************************************************************
+ *              *      已经获得读锁                    通过               阻止      *
+ *              *****************************************************************
+ *              *      已经获得写锁                    阻止               阻止      *
+ *              *****************************************************************
+ *
+*/
+int g_number = 0;
+pthread_rwlock_t g_rwlock;
+
+void *read_thread(void *param)
+{
+    while (1)
+    {
+        //请求读锁
+        pthread_rwlock_rdlock(&g_rwlock);
+        printf("read thread ID:%d,g_number:%d\n",pthread_self(),g_number);
+
+        pthread_rwlock_unlock(&g_rwlock);
+        sleep(1);
+    }
+}
+
+void *write_thread(void *param)
+{
+    while(1)
+    {
+        //请求写锁
+        pthread_rwlock_wrlock(&g_rwlock);
+        ++g_number;
+        printf("write thread ID:%d,g_number:%d\n",pthread_self(),g_number);
+        pthread_rwlock_unlock(&g_rwlock);
+        sleep(1);
+
+    }
+}
+
+int main()
+{
+    //!默认属性，其行为是请求读锁的线程优先获得到锁
+    //pthread_rwlock_init(&g_rwlock,NULL);
+    //!锁对象的属性修改成请求写锁优先
+    pthread_rwlockattr_t rwlockattr;
+    pthread_rwlockattr_init(&rwlockattr);
+    pthread_rwlockattr_setkind_np(&rwlockattr,PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP);
+    pthread_rwlock_init(&g_rwlock,&rwlockattr);
+    pthread_t readthread[5];
+    for (int i = 0;i < 5; i++)
+    {
+        pthread_create(&readthread[i],NULL,read_thread,NULL);
+    }
+    pthread_t writethread;
+    pthread_create(&writethread,NULL,write_thread,NULL);
+    for (int i = 0; i < 5; i++)
+    {
+        pthread_join(readthread[i],NULL);
+    }
+    pthread_join(writethread,NULL);
+
+    pthread_rwlock_destroy(&g_rwlock);
+    pthread_rwlockattr_destroy(&rwlockattr);
+
     return 0;
 }
